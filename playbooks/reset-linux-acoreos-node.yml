@@ -1,0 +1,28 @@
+---
+- name: Uninstall ACoreOs Node
+  hosts: acoreos_node
+  gather_facts: false
+  become: true
+  any_errors_fatal: "{{ any_errors_fatal | default(true) }}"
+  tasks:
+    - name: Print IP Info
+      debug:
+        msg: "The IP address of this machine is {{ ansible_default_ipv4.address }}"
+    - name: Uninstall ACoreOs Node
+      shell: |
+        echo "1. Stop and remove containers"
+        echo "Stop and remove cos-worknode"
+        docker rm -f cos-worknode > /dev/null
+        echo "2. Remove images"
+        docker rmi $(docker images | grep cos | awk '{print $1":"$2}')
+        echo "3. Remove tools&configs"
+        rm -rf /opt/cni
+        rm -rf ~/.kube
+        rm -f cni.tar pause.tar busybox.tar config.tar
+      args:
+        executable: /bin/bash
+      register: clusterinfo
+      retries: 5
+      delay: 30
+      until: clusterinfo.rc == 0
+    - debug: var=clusterinfo.stdout_lines

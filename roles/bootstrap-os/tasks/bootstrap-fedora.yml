@@ -34,3 +34,5 @@
     name: libselinux-python3
     state: present
   become: true
+  when:
+    - arch != "ft"

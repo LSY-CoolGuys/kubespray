@@ -1,0 +1,55 @@
+---
+- name: Install ACoreOs Node
+  hosts: acoreos_node
+  vars:
+    ip: ''
+    host: ''
+  gather_facts: false
+  become: true
+  any_errors_fatal: "{{ any_errors_fatal | default(true) }}"
+  tasks:
+    - name: Install ACoreOs Node
+      shell: |
+        hostname
+        echo "- Master: {{ master_host }}:{{ master_port }}"
+        echo "1. Check docker exist"
+        which docker > /dev/null
+        if [ $? -ne 0 ]; then
+            echo "ERROR: Please install docker before run install script."
+            exit
+        fi
+        echo "2. Install tools"
+        mkdir -p /usr/local/bin/
+        cp tools/* /usr/local/bin/
+        tar xf cni.tar -C /
+        echo "3. Load images"
+        for img in $(ls images/cos-*.tar); do
+                $(docker load -i $img | awk -F'[: \t]' '{print "docker tag "$4":"$5" "$4":latest"}')
+        done
+        ctr -n k8s.io i import images/pause.tar
+        ctr -n k8s.io i import images/busybox.tar
+        echo "4. Generate configs"
+        sed -e "s/REGISTRY_ADDR/$REGISTRY_ADDR/g" configs/config.toml > /etc/containerd/config.toml
+        sed -e "s/REGISTRY_ADDR/$REGISTRY_ADDR/g" configs/daemon.json > /etc/docker/daemon.json
+        cp configs/crictl.yaml /etc/crictl.yaml
+        echo "5. Run containers"
+        docker ps | grep cos- > /dev/null
+        if [ $? -eq 0 ]; then
+                echo "Stop and remove running containers"
+                docker rm -f cos-master > /dev/null
+                docker rm -f cos-worknode > /dev/null
+                docker rm -f cos-dashboard > /dev/null
+        fi
+        docker run -itd --restart=always --network=host --privileged=true --name cos-worknode -v /run/containerd/containerd.sock:/containerd/containerd.sock -v /run/flannel:/flannel -v /proxy-root:/proxy-root -v /etc/machine-id:/etc/machine-id cos-worknode:latest --api-servers={{ master_addr }} --hostname-override=node1 --enable-pod-ipam=1 --container-runtime-endpoint=unix:///containerd/containerd.sock --node-status-update-frequency=290 --sync-frequency=30000 > /dev/null
+        if [ $? -ne 0 ]; then
+                echo "Run cos-worknode failed"
+                exit
+        fi
+        echo "Run cos-worknode success"
+      args:
+        executable: /bin/bash
+      register: clusterinfo
+      retries: 5
+      delay: 30
+      until: clusterinfo.rc == 0
+    - debug: var=clusterinfo.stdout_lines

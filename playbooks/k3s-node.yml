@@ -1,0 +1,31 @@
+---
+- name: Install K3S Node
+  hosts: acoreos_node
+  gather_facts: false
+  become: true
+  any_errors_fatal: "{{ any_errors_fatal | default(true) }}"
+  tasks:
+    - name: Install K3S Node
+      shell: |
+        hostName=`hostname`
+        echo "- HostName: $hostName"
+        echo "- Master: {{ master_host }}:{{ master_port }}"
+        TOKEN=`cat ~/.kube/node-token`
+        echo "K3s token is : $TOKEN"
+        echo "1. Check docker exist"
+        which docker > /dev/null
+        if [ $? -ne 0 ]; then
+            echo "ERROR: Please install docker before run install script."
+            exit
+        fi
+        echo "2. Install K3S Node"
+        docker run -itd --restart=always --network=host --privileged=true --name k3s-agent rancher/k3s:latest agent --server https://{{master_host}}:{{master_port}} --token=$TOKEN --node-label 'node-role=worker' > /dev/null
+        if [ $? -ne 0 ]; then
+                echo "Run cos-worknode failed"
+                exit
+        fi
+        echo "Run K3S Node success"
+      args:
+        executable: /bin/bash
+      retries: 5
+      delay: 30

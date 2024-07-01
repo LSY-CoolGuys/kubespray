@@ -1,0 +1,62 @@
+---
+- name: Install ACoreOs Node
+  hosts: acoreos_node
+  vars:
+    ip: ''
+    host: ''
+  gather_facts: false
+  become: true
+  any_errors_fatal: "{{ any_errors_fatal | default(true) }}"
+  tasks:
+    - name: Print IP Info
+      debug:
+        msg: "The IP address of this machine is {{ ansible_default_ipv4.address }}"
+    - name: Install ACoreOs Node
+      shell: |
+        NODE_NAME=`hostname`
+        ARCH=`uname -m` # aarch64、x86_64
+        # Check Docker
+        echo "1. Check docker exist"
+        which docker > /dev/null
+        if [ $? -ne 0 ]; then
+                echo "ERROR: Please install docker before run install script."
+                exit
+        fi
+        echo "2. Install tools"
+        wget {{ minio_address }}/acoreos/$ARCH/cni.tar -O cni.tar
+        tar xf cni.tar -C /
+        echo "3. Load images"
+        docker pull {{ registry_host }}/acoreos/cos-worknode:latest
+        wget {{ minio_address }}/acoreos/$ARCH/pause.tar -O pause.tar
+        wget {{ minio_address }}/acoreos/$ARCH/busybox.tar -O busybox.tar
+        ctr -n k8s.io i import pause.tar
+        ctr -n k8s.io i import busybox.tar
+        echo "4. Generate configs"
+        wget {{ minio_address }}/acoreos/$ARCH/configs.tar -O configs.tar
+        tar -xf configs.tar
+        sed -e "s/REGISTRY_ADDR/{{ registry_host }}/g" configs/config.toml > /etc/containerd/config.toml
+        sed -e "s/REGISTRY_ADDR/{{ registry_host }}/g" configs/daemon.json > /etc/docker/daemon.json
+        cp configs/crictl.yaml /etc/crictl.yaml
+        echo "5. Run containers"
+        docker ps | grep cos- > /dev/null
+        if [ $? -eq 0 ]; then	
+                echo "Stop and remove running containers"
+                docker rm -f cos-master > /dev/null
+                docker rm -f cos-worknode > /dev/null
+                docker rm -f cos-dashboard > /dev/null
+        fi
+        docker run -itd --restart=always --network=host --privileged=true --name cos-worknode -v /run/containerd/containerd.sock:/containerd/containerd.sock -v /run/flannel:/flannel -v /proxy-root:/proxy-root -v /etc/machine-id:/etc/machine-id {{ registry_host }}/acoreos/cos-worknode:latest --api-servers={{master_host}}:{{master_port}} --hostname-override=$NODE_NAME --enable-pod-ipam=1 --container-runtime-endpoint=unix:///containerd/containerd.sock --node-status-update-frequency=290 --sync-frequency=30000 > /dev/null
+        if [ $? -ne 0 ]; then
+                echo "Run cos-worknode failed"
+                exit
+        fi
+        echo "Run cos-worknode success"
+        echo "Clean tar"
+        rm -rf cni.tar pause.tar busybox.tar configs.tar configs
+      args:
+        executable: /bin/bash
+      register: clusterinfo
+      retries: 5
+      delay: 30
+      until: clusterinfo.rc == 0
+    - debug: var=clusterinfo.stdout_lines

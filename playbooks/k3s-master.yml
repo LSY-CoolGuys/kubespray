@@ -1,0 +1,35 @@
+---
+- name: Install K3S Master
+  hosts: acoreos_control_plane
+  gather_facts: false
+  become: true
+  any_errors_fatal: "{{ any_errors_fatal | default(true) }}"
+  tasks:
+    - name: Install K3S Master
+      shell: |
+        hostName=`hostname`
+        echo "- HostName: $hostName"
+        echo "- Master: {{ master_host }}:{{ master_port }}"
+        echo "1. Check docker exist"
+        which docker > /dev/null
+        if [ $? -ne 0 ]; then
+            echo "ERROR: Please install docker before run install script."
+            exit
+        fi
+        echo "2. Install K3S Master"
+        docker run -itd --restart=always -p 6443:6443 --privileged=true --name k3s -e K3S_KUBECONFIG_OUTPUT=/output/kubeconfig rancher/k3s:latest server --node-ip {{master_host}} --node-external-ip {{master_host}} > /dev/null
+        if [ $? -ne 0 ]; then
+                echo "Run cos-worknode failed"
+                exit
+        fi
+        echo "Run K3S Master success"
+        sleep 25
+        mkdir -p ~/.kube
+        docker cp k3s:/output/kubeconfig ~/.kube/config
+        docker cp k3s:/var/lib/rancher/k3s/server/token ~/.kube/node-token
+        #sed -i 's#127.0.0.1#{{master_host}}#g' ~/.kube/config
+        kubectl get no
+      args:
+        executable: /bin/bash
+      retries: 5
+      delay: 30
